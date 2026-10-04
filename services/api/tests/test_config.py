@@ -38,3 +38,12 @@ def test_remote_postgres_requires_tls_and_pools():
     transaction = engine_options(SUPABASE.replace(':5432', ':6543'))
     assert transaction['connect_args']['prepare_threshold'] is None
     assert 'sslmode' not in engine_options('postgresql+psycopg://u:p@localhost/db')['connect_args']
+
+
+def test_serverless_uses_no_client_pool(monkeypatch):
+    from app.core.config import settings
+    from sqlalchemy.pool import NullPool
+    monkeypatch.setattr(settings, 'db_null_pool', True)
+    options = engine_options(SUPABASE.replace(':5432', ':6543'))
+    assert options['poolclass'] is NullPool and 'pool_size' not in options
+    assert options['connect_args']['prepare_threshold'] is None and options['connect_args']['sslmode'] == 'require'

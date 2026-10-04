@@ -101,7 +101,7 @@ def test_invalid_signature_issuer_audience_and_expiry_are_rejected(auth_client):
     client,_=auth_client
     wrong_key=rsa.generate_private_key(public_exponent=65537,key_size=2048)
     invalid=jwt.encode({'iss':ISSUER,'aud':'authenticated','sub':OWNER_SUB,'exp':datetime.now(timezone.utc)+timedelta(minutes=5)},wrong_key,algorithm='RS256',headers={'kid':'test-key'})
-    cases=[invalid,token_for(iss='https://attacker.example/auth/v1'),token_for(aud='other'),token_for(exp=datetime.now(timezone.utc)-timedelta(seconds=1))]
+    cases=[invalid,token_for(iss='https://attacker.example/auth/v1'),token_for(aud='other'),token_for(exp=datetime.now(timezone.utc)-timedelta(seconds=auth_core.JWT_CLOCK_SKEW_SECONDS+5))]
     for token in cases:
         assert client.get('/api/v1/auth/me',headers={'Authorization':'Bearer '+token}).status_code==401
 
@@ -112,3 +112,10 @@ def test_disabled_user_and_missing_server_configuration_fail_closed(auth_client,
     assert signin(client).status_code==401
     monkeypatch.setattr(settings,'supabase_url','')
     assert client.get('/api/v1/auth/me',headers={'Authorization':'Bearer '+token_for()}).status_code==503
+
+
+def test_token_issued_by_a_slightly_fast_auth_clock_is_accepted(auth_client):
+    # Supabase Auth's clock can be a few seconds ahead of the API host.
+    client,_=auth_client
+    ahead=datetime.now(timezone.utc)+timedelta(seconds=5)
+    assert client.get('/api/v1/auth/me',headers={'Authorization':'Bearer '+token_for(iat=ahead)}).status_code==200

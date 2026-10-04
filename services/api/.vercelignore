@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+*.db
+.venv
+.venv312
+__pycache__
+.pytest_cache
+tests
+scripts/e2e_server.py
+Dockerfile

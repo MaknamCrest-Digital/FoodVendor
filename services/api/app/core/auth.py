@@ -17,6 +17,7 @@ from app.db.session import get_db
 from app.models.admin import User
 
 bearer = HTTPBearer(auto_error=False)
+JWT_CLOCK_SKEW_SECONDS = 30
 _jwks_clients: dict[str, PyJWKClient] = {}
 
 
@@ -60,6 +61,9 @@ def decode_supabase_token(token: str) -> dict:
             audience=settings.supabase_jwt_audience,
             issuer=issuer,
             options={'require': ['exp', 'sub', 'iss', 'aud']},
+            # Supabase Auth's clock can run ahead of the API host; without this a
+            # just-issued token fails "iat in the future" and sign-in breaks.
+            leeway=JWT_CLOCK_SKEW_SECONDS,
         )
     except (PyJWTError, PyJWKClientError, ValueError):
         raise HTTPException(401, 'Invalid or expired access token', headers={'WWW-Authenticate': 'Bearer'})

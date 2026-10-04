@@ -16,7 +16,7 @@ def run_migrations_offline():
 def run_migrations_online():
     # settings.database_url is normalized (psycopg 3) and may contain characters
     # that configparser interpolation would mangle, so it is not written to config.
-    options={key:value for key,value in engine_options().items() if not key.startswith('pool_') and key!='max_overflow'}
+    options={key:value for key,value in engine_options().items() if not key.startswith('pool') and key!='max_overflow'}
     connectable=create_engine(settings.database_url,poolclass=pool.NullPool,**options)
     with connectable.connect() as connection:
         context.configure(connection=connection,target_metadata=target_metadata,compare_type=True)

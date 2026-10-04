@@ -1,8 +1,8 @@
 // Refuses a pilot/production build that would point testers at localhost.
-// Set MAKNAM_DEPLOY=pilot (or production) in the hosting build environment.
+// Enforced on Vercel builds automatically; elsewhere set MAKNAM_DEPLOY=pilot|production.
 import nextEnv from '@next/env';
 
-const target=process.env.MAKNAM_DEPLOY;
+const target=process.env.MAKNAM_DEPLOY||(process.env.VERCEL?`vercel-${process.env.VERCEL_ENV||'build'}`:'');
 nextEnv.loadEnvConfig(process.cwd(),false);
 if(target){
   const problems=[];

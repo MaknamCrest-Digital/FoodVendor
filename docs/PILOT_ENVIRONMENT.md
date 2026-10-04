@@ -100,6 +100,9 @@ access. All of this is enforced by FastAPI.
 
 ## Deploying for remote testers
 
+**The chosen host is Vercel. Follow [DEPLOY_VERCEL.md](DEPLOY_VERCEL.md).** The generic
+notes below apply to other hosts.
+
 The API and the frontend must be reachable over HTTPS from the testers' networks.
 
 1. **API host**: any container host (Render, Railway, Fly.io, Cloud Run, etc.) can

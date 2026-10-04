@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.pool import NullPool
 from app.core.config import settings
 
 
@@ -15,6 +16,8 @@ def engine_options(database_url: str = settings.database_url) -> dict:
     if url.port == 6543:
         # Supabase transaction pooler does not support server-side prepared statements.
         connect_args['prepare_threshold'] = None
+    if settings.db_null_pool:
+        return {'connect_args': connect_args, 'poolclass': NullPool}
     return {
         'connect_args': connect_args,
         'pool_pre_ping': True,

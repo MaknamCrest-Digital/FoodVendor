@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     db_pool_recycle: int = 1800
     db_connect_timeout: int = 10
     db_sslmode: str = "require"
+    # Serverless (Vercel sets VERCEL=1): no client-side pool; use Supabase's
+    # transaction pooler (port 6543) so frozen instances hold no connections.
+    db_null_pool: bool = bool(os.environ.get('VERCEL'))
     pilot_admin_email: str = "admin@adonai.test"
     pilot_admin_password: str = ""
     pilot_cashier_email: str = "cashier@adonai.test"
