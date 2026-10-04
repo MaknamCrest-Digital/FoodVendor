@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0F586E"/>
+  <!-- Mark stays inside the 80% maskable safe zone. -->
+  <path d="M136 356V164h44l76 104 76-104h44v192h-46V240l-74 100-74-100v116z" fill="#FFFFFF"/>
+  <rect x="136" y="378" width="240" height="18" rx="9" fill="#77CEDC"/>
+</svg>

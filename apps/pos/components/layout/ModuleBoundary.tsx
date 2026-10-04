@@ -1,0 +1,2 @@
+import Link from 'next/link';
+export default function ModuleBoundary({title}:{title:string}){return <section className="module-workspace"><div className="module-heading"><div><span className="eyebrow">PLANNED MODULE</span><h1>{title}</h1><p>This workflow is not available in the pilot build yet.</p></div></div><p>No live records or actions are available on this page.</p><Link className="panel-link" href="/pos/">Open POS</Link></section>;}

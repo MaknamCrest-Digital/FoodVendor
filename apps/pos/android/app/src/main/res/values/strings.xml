@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Maknam POS</string>
+    <string name="title_activity_main">Maknam POS</string>
+    <string name="package_name">com.maknam.pos</string>
+    <string name="custom_url_scheme">com.maknam.pos</string>
+</resources>

@@ -1,0 +1,13 @@
+"use client";
+import {useState} from 'react';
+import {ArrowDown,ArrowUp} from 'lucide-react';
+import Dialog from '../ui/Dialog';
+import {Button,StatusBadge} from '../ui/primitives';
+import {useAdminData} from '../admin/AdminData';
+import {categories,reorderCategories,saveCategory} from '../../src/lib/menu';
+import {str,type AdminRecord} from '../../src/types/admin';
+export default function CategoriesDialog({onClose}:{onClose:()=>void}){
+  const {records,refresh}=useAdminData();const rows=categories(records);const [edit,setEdit]=useState<AdminRecord|null>(null);const [name,setName]=useState('');const [busy,setBusy]=useState(false);const [error,setError]=useState('');
+  async function action(work:()=>Promise<void>){if(busy)return;setBusy(true);setError('');try{await work();await refresh();window.dispatchEvent(new Event('records-changed'));}catch(error){setError(error instanceof Error?error.message:'Could not save categories.');}finally{setBusy(false);}}
+  return <Dialog title="Manage categories" onClose={onClose} busy={busy} wide><p className="owner-intro">Create your restaurant’s categories. Inactive categories cannot be sold at the POS.</p><form className="owner-form category-create" onSubmit={event=>{event.preventDefault();void action(async()=>{await saveCategory({...edit?.data,name},edit?.id,edit?.revision);setEdit(null);setName('');});}}><label>Category name<input required maxLength={80} value={name} onChange={e=>setName(e.target.value)}/></label><Button type="submit" variant="primary" disabled={busy}>{edit?'Save category':'Add category'}</Button>{edit&&<Button type="button" onClick={()=>{setEdit(null);setName('');}}>Cancel edit</Button>}</form>{error&&<p className="form-error" role="alert">{error}</p>}<div className="category-list">{rows.map((r,index)=><div key={r.id}><strong>{str(r.data,'name')}</strong><StatusBadge tone={r.data.active?'success':'warning'}>{r.data.active?'Active':'Inactive'}</StatusBadge><div className="row-actions"><Button disabled={busy} onClick={()=>{setEdit(r);setName(str(r.data,'name'));}}>Edit</Button><Button disabled={busy} onClick={()=>void action(()=>saveCategory({...r.data,active:!r.data.active},r.id,r.revision))}>{r.data.active?'Deactivate':'Activate'}</Button><Button aria-label={`Move ${r.data.name} up`} disabled={busy||index===0} onClick={()=>void action(()=>reorderCategories(r,rows[index-1]))}><ArrowUp size={17}/></Button><Button aria-label={`Move ${r.data.name} down`} disabled={busy||index===rows.length-1} onClick={()=>void action(()=>reorderCategories(r,rows[index+1]))}><ArrowDown size={17}/></Button></div></div>)}</div>{!rows.length&&<p className="owner-intro">Add your first category above.</p>}</Dialog>;
+}

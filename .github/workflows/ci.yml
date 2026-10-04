@@ -1,0 +1,51 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    defaults: {run: {working-directory: services/api}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install -r requirements.txt
+      - run: python -m pytest
+  pos:
+    runs-on: ubuntu-latest
+    defaults: {run: {working-directory: apps/pos}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        with:
+          name: food-vendor-os-1.0.0-${{ github.sha }}
+          path: apps/pos/out/
+  fullstack:
+    # Real FastAPI + seeded pilot tenant (isolated SQLite, local JWKS) + built PWA.
+    runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: pip install -r services/api/requirements.txt
+      - run: npm ci && npm run build && npx playwright install --with-deps chromium
+        working-directory: apps/pos
+      - run: |
+          python services/api/scripts/e2e_server.py /tmp/maknam-e2e 8020 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8020/health/db && break; sleep 1; done
+      - run: npx playwright test e2e/fullstack.spec.ts
+        working-directory: apps/pos
+        env: {FULLSTACK_TOKENS: /tmp/maknam-e2e/tokens.json}

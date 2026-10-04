@@ -1,0 +1,19 @@
+{
+  "id": "/pos/",
+  "name": "Maknam POS",
+  "short_name": "Maknam POS",
+  "description": "Offline-first POS for food vendors.",
+  "start_url": "/pos/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#E9F5F6",
+  "theme_color": "#0F586E",
+  "categories": ["business", "food", "productivity"],
+  "icons": [
+    {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+    {"src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}
+  ]
+}

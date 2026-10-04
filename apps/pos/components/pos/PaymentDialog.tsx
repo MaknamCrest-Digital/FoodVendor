@@ -1,0 +1,9 @@
+"use client";
+import {useState} from 'react';
+import Dialog from '../ui/Dialog';
+import {Button} from '../ui/primitives';
+import {useSettings} from '../settings/SettingsProvider';
+import {usePos} from './PosProvider';
+import {money} from '../../src/lib/settings';
+import {paymentLabel} from './display';
+export default function PaymentDialog({onClose}:{onClose:()=>void}){const {settings}=useSettings();const {payment,total,pay,busy,notice}=usePos();const [tender,setTender]=useState((total/100).toFixed(2));const [reference,setReference]=useState('');const received=Math.round(Number(tender)*100);return <Dialog title={`Confirm ${paymentLabel(payment)} payment`} onClose={onClose} busy={busy}><form className="owner-form" onSubmit={async e=>{e.preventDefault();const saved=await pay({amountTendered:payment==='CASH'?received:undefined,paymentReference:reference});if(saved)onClose();}}><div className="total"><span>Total</span><strong>{money(total)}</strong></div>{payment==='CASH'&&settings.pos.showChangeCalculator&&<><label>Cash received<input autoFocus required type="number" step="0.01" min={(total/100).toFixed(2)} value={tender} onChange={e=>setTender(e.target.value)}/></label><div className="total"><span>Change</span><strong>{money(Math.max(0,received-total))}</strong></div></>}{payment!=='CASH'&&<label>{paymentLabel(payment)} reference{payment==='MOMO'&&settings.payments.requireMomoReference?' (required)':' (optional)'}<input required={payment==='MOMO'&&settings.payments.requireMomoReference} maxLength={200} value={reference} onChange={e=>setReference(e.target.value)}/></label>}<p>Confirm you have received payment before saving this sale.</p>{notice&&<p role="alert">{notice}</p>}<Button variant="primary" disabled={busy||payment==='CASH'&&received<total}>{busy?'Saving sale…':'Payment received · Save sale'}</Button></form></Dialog>;}
