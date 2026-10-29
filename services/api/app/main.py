@@ -6,6 +6,7 @@ from app.models.models import *  # noqa
 from app.core.config import settings
 from app.models.admin import User, LoginSession, AdminEvent, AdminRecord  # noqa
 from app.models.access import Permission,Role,RolePermission,UserRole,UserPermissionOverride,ScopedSetting,SecurityAudit  # noqa
+from app.models.platform import PlatformAdmin, BusinessApplication, PlatformAudit  # noqa
 from app.api.auth_routes import router as auth_router
 from app.api.admin_routes import router as admin_router
 from app.api.team_routes import router as team_router

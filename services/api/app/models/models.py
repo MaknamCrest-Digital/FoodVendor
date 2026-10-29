@@ -1,17 +1,23 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, Integer, DateTime, ForeignKey, UniqueConstraint, JSON
+from sqlalchemy import String, Integer, DateTime, ForeignKey, UniqueConstraint, JSON, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.session import Base
 
 def uid(): return str(uuid.uuid4())
 def now(): return datetime.now(timezone.utc)
 
+# Lifecycle (0006). ACTIVE <-> SUSPENDED; ACTIVE or SUSPENDED -> CLOSED, which is terminal.
+# Transitions are enforced by the platform service, not by the database.
+BUSINESS_STATUSES = ('ACTIVE', 'SUSPENDED', 'CLOSED')
+
 class Business(Base):
     __tablename__ = "businesses"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     name: Mapped[str] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    status: Mapped[str] = mapped_column(String(20), default='ACTIVE', server_default='ACTIVE')
+    __table_args__ = (CheckConstraint("status IN ('ACTIVE','SUSPENDED','CLOSED')", name='ck_businesses_status'),)
 
 class Location(Base):
     __tablename__ = "locations"
