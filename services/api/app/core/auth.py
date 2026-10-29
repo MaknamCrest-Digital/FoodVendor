@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.identity import Identity, IdentityVerifier
 from app.db.session import get_db
 from app.models.admin import User
 
@@ -69,15 +70,42 @@ def decode_supabase_token(token: str) -> dict:
         raise HTTPException(401, 'Invalid or expired access token', headers={'WWW-Authenticate': 'Bearer'})
 
 
-def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer), db: Session = Depends(get_db)) -> User:
+class SupabaseJwtVerifier:
+    """Supabase Auth access tokens, verified by decode_supabase_token above."""
+    provider = 'supabase'
+
+    def verify(self, token: str) -> Identity:
+        claims = decode_supabase_token(token)
+        try:
+            subject = str(UUID(claims['sub']))
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(401, 'Invalid access token subject', headers={'WWW-Authenticate': 'Bearer'})
+        email = claims.get('email')
+        email = email.strip().lower() if isinstance(email, str) and email.strip() else None
+        # Supabase reports email_verified only inside user_metadata, which the user can
+        # edit (auth.updateUser), so it is never trusted. Fail closed until a trusted
+        # confirmation source is chosen.
+        return Identity(provider=self.provider, subject=subject, email=email, email_verified=False)
+
+
+_supabase_verifier = SupabaseJwtVerifier()
+
+
+def identity_verifier() -> IdentityVerifier:
+    return _supabase_verifier
+
+
+def current_identity(credentials: HTTPAuthorizationCredentials | None = Depends(bearer), verifier: IdentityVerifier = Depends(identity_verifier)) -> Identity:
     if not credentials:
         raise HTTPException(401, 'Sign in to continue', headers={'WWW-Authenticate': 'Bearer'})
-    claims = decode_supabase_token(credentials.credentials)
-    try:
-        subject = str(UUID(claims['sub']))
-    except (KeyError, TypeError, ValueError):
-        raise HTTPException(401, 'Invalid access token subject', headers={'WWW-Authenticate': 'Bearer'})
-    user = db.scalar(select(User).where(User.supabase_user_id == subject))
+    return verifier.verify(credentials.credentials)
+
+
+def current_user(identity: Identity = Depends(current_identity), db: Session = Depends(get_db)) -> User:
+    # users.supabase_user_id links tenant accounts to Supabase subjects only.
+    if identity.provider != SupabaseJwtVerifier.provider:
+        raise HTTPException(401, 'Account is not linked or is unavailable')
+    user = db.scalar(select(User).where(User.supabase_user_id == identity.subject))
     if not user or not user.active:
         raise HTTPException(401, 'Account is not linked or is unavailable')
     return user
