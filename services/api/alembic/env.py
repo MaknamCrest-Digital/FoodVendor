@@ -5,6 +5,7 @@ from app.db.session import Base, engine_options
 from app.models.models import *  # noqa
 from app.models.admin import *  # noqa
 from app.models.access import *  # noqa
+from app.models.platform import *  # noqa
 from app.core.config import settings
 config=context.config
 if config.config_file_name and config.get_section('loggers'): fileConfig(config.config_file_name)

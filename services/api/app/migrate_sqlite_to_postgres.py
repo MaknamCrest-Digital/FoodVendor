@@ -19,9 +19,12 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.core.config import settings
 from app.db.session import Base
-from app.models import access, admin, models  # noqa: F401
+from app.models import access, admin, models, platform  # noqa: F401
 
 SKIPPED_TABLES = {'alembic_version', 'login_sessions'}
+# Platform tables (0006) postdate the SQLite deployments, so an older source may lack
+# them; they can hold no source rows. Any other missing table is still an error.
+POST_SQLITE_TABLES = {'platform_admins', 'business_applications', 'platform_audit'}
 SKIPPED_COLUMNS = {'users': {'password_hash'}}
 
 
@@ -85,9 +88,9 @@ def _canonical(value: Any):
     return value
 
 
-def _schema_signature(inspector, metadata: MetaData, side: str):
+def _schema_signature(inspector, metadata: MetaData, side: str, allow_missing: frozenset[str] = frozenset()):
     actual_tables = set(inspector.get_table_names()) - {'alembic_version'}
-    expected_tables = set(metadata.tables)
+    expected_tables = set(metadata.tables) - (allow_missing - actual_tables)
     if actual_tables != expected_tables:
         missing = sorted(expected_tables - actual_tables)
         extra = sorted(actual_tables - expected_tables)
@@ -95,6 +98,8 @@ def _schema_signature(inspector, metadata: MetaData, side: str):
 
     signatures = {}
     for name, table in metadata.tables.items():
+        if name not in expected_tables:
+            continue
         actual_columns = {column['name']: column for column in inspector.get_columns(name)}
         expected_columns = {column.name: column for column in table.columns}
         missing = sorted(set(expected_columns) - set(actual_columns))
@@ -199,13 +204,17 @@ def transfer_rows(source_connection, target_connection, metadata: MetaData = Bas
     """Merge source rows without overwriting; rollback on any ambiguous collision."""
     source_inspector = inspect(source_connection)
     target_inspector = inspect(target_connection)
-    _schema_signature(source_inspector, metadata, 'Source SQLite')
+    source_tables = _schema_signature(source_inspector, metadata, 'Source SQLite', frozenset(POST_SQLITE_TABLES))
     _schema_signature(target_inspector, metadata, 'Target PostgreSQL')
     report = {}
     source_metadata = MetaData()
-    source_metadata.reflect(bind=source_connection, only=list(metadata.tables))
+    source_metadata.reflect(bind=source_connection, only=list(source_tables))
     for table in metadata.sorted_tables:
         name = table.name
+        if name not in source_tables:
+            target_count = _row_count(target_connection, name)
+            report[name] = {'source_rows': 0, 'target_rows_before': target_count, 'target_rows_after': target_count, 'copied': 0, 'unchanged': 0, 'skipped': 0}
+            continue
         source_table = source_metadata.tables[name]
         source_count = _row_count(source_connection, name)
         target_count_before = _row_count(target_connection, name)

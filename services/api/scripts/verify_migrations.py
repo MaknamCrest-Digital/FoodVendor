@@ -8,8 +8,11 @@ and drops them afterwards:
            ORM/migration drift.
   upgrade  Supabase-like database (anon/authenticated roles with Supabase's
            default grants) migrated to 0004 and filled with tenant data, then
-           upgraded to head; checks every row survived, RLS is on, client roles
-           lost all grants (also for tables created later) and are denied reads.
+           upgraded through 0005 to head; checks every existing value survived,
+           businesses became ACTIVE, RLS is on, client roles lost all grants (also
+           for tables created later) and cannot read or write tenant, platform or
+           application records, every schema constraint rejects violations (with a
+           valid write as control), and a downgrade is refused without changes.
 
     cd services/api
     MIGRATION_CHECK_URL=postgresql+psycopg://user:pass@localhost:5432/postgres python scripts/verify_migrations.py
@@ -21,6 +24,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -36,7 +40,7 @@ from alembic.migration import MigrationContext  # noqa: E402
 from alembic.script import ScriptDirectory  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.engine import make_url  # noqa: E402
-from sqlalchemy.exc import ProgrammingError  # noqa: E402
+from sqlalchemy.exc import DBAPIError, ProgrammingError  # noqa: E402
 
 import app.main  # noqa: E402,F401  registers every model
 from app.db.session import Base  # noqa: E402
@@ -44,6 +48,10 @@ from app.db.session import Base  # noqa: E402
 LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1'}
 CLIENT_ROLES = ('anon', 'authenticated')
 PRE_LOCKDOWN = '0004_canonical_indexes'
+LOCKDOWN = '0005_supabase_lockdown'
+PLATFORM_TABLES = ('platform_admins', 'business_applications', 'platform_audit')
+# SQLSTATE codes
+CHECK, UNIQUE, FOREIGN_KEY, NOT_NULL, DENIED = '23514', '23505', '23503', '23502', '42501'
 SCRIPTS = ScriptDirectory.from_config(Config(str(API_DIR / 'alembic.ini')))
 HEAD = SCRIPTS.get_current_head()
 EXPECTED_TABLES = set(Base.metadata.tables) | {'alembic_version'}
@@ -79,11 +87,33 @@ def client_grants(connection) -> list[str]:
     return sorted(rows)
 
 
-def fingerprints(connection, tables) -> dict[str, tuple[int, str]]:
-    # Row count plus a content hash per table: proves the upgrade kept every value.
-    return {table: tuple(connection.execute(text(
-        f'select count(*), coalesce(md5(string_agg(t::text, \'|\' order by t::text)), \'\') from public."{table}" t')).one())
-        for table in sorted(tables)}
+def table_columns(connection, tables) -> dict[str, list[str]]:
+    return {table: list(connection.execute(text(
+        "select column_name from information_schema.columns where table_schema='public' and table_name=:t order by ordinal_position"),
+        {'t': table}).scalars()) for table in sorted(tables)}
+
+
+def fingerprints(connection, columns: dict[str, list[str]]) -> dict[str, tuple[int, str]]:
+    # Row count plus a hash of the given columns: proves an upgrade kept every existing
+    # value even when it adds columns.
+    result = {}
+    for table, names in columns.items():
+        row = 'row(' + ','.join(f'"{name}"' for name in names) + ')::text'
+        result[table] = tuple(connection.execute(text(
+            f'select count(*), coalesce(md5(string_agg(r, \'|\' order by r)), \'\') from (select {row} as r from public."{table}") s')).one())
+    return result
+
+
+def outcome(connection, statement: str, params: dict | None = None) -> str:
+    """'accepted', or the PostgreSQL SQLSTATE that rejected the statement (inside a savepoint)."""
+    savepoint = connection.begin_nested()
+    try:
+        connection.execute(text(statement), params or {})
+        savepoint.commit()
+        return 'accepted'
+    except DBAPIError as error:
+        savepoint.rollback()
+        return getattr(error.orig, 'sqlstate', None) or type(error.orig).__name__
 
 
 def version(connection) -> str | None:
@@ -100,7 +130,7 @@ def verify_fresh(url: str):
               f'missing={sorted(EXPECTED_TABLES - tables)} unexpected={sorted(tables - EXPECTED_TABLES)}')
         missing_rls = tables_without_rls(connection)
         check(not missing_rls, f'fresh: row-level security on all {len(tables)} public tables', f'without RLS: {missing_rls}')
-        drift = compare_metadata(MigrationContext.configure(connection, opts={'compare_type': True}), Base.metadata)
+        drift = compare_metadata(MigrationContext.configure(connection, opts={'compare_type': True, 'compare_server_default': True}), Base.metadata)
         check(not drift, 'fresh: no drift between ORM models and migrated schema', '\n    '.join(map(str, drift)))
     engine.dispose()
     alembic(url, 'upgrade', 'head')
@@ -153,17 +183,23 @@ def verify_upgrade(url: str):
         check(version(connection) == PRE_LOCKDOWN, f'upgrade: starts at {PRE_LOCKDOWN}', str(version(connection)))
         check(bool(client_grants(connection)) and bool(tables_without_rls(connection)),
               'upgrade: starting database exposes tables to client roles (lockdown not yet applied)')
-        empty = [table for table, (count, _) in fingerprints(connection, tables).items() if not count]
+        seeded_columns = table_columns(connection, tables)
+        before = fingerprints(connection, seeded_columns)
+        empty = [table for table, (count, _) in before.items() if not count]
         check(not empty, f'upgrade: all {len(tables)} tables hold seed data', f'empty: {empty}')
-        before = fingerprints(connection, tables)
     engine.dispose()
+    alembic(url, 'upgrade', LOCKDOWN)
     alembic(url, 'upgrade', 'head')
     engine = create_engine(url)
     with engine.connect() as connection:
-        check(version(connection) == HEAD, 'upgrade: alembic version is head', f'{version(connection)} (head {HEAD})')
-        after = fingerprints(connection, tables)
+        check(version(connection) == HEAD, f'upgrade: {PRE_LOCKDOWN} -> {LOCKDOWN} -> head', f'{version(connection)} (head {HEAD})')
+        after = fingerprints(connection, seeded_columns)
         changed = sorted(table for table in tables if before[table] != after[table])
-        check(not changed, 'upgrade: every seeded row is unchanged', f'changed: {changed}')
+        check(not changed, 'upgrade: every seeded row and value is unchanged', f'changed: {changed}')
+        statuses = connection.execute(text('select status, count(*) from businesses group by status')).all()
+        check(statuses == [('ACTIVE', 2)], 'upgrade: existing businesses become ACTIVE', f'{statuses}')
+        missing = sorted(set(PLATFORM_TABLES) - public_tables(connection))
+        check(not missing, 'upgrade: platform tables created', f'missing: {missing}')
         missing_rls = tables_without_rls(connection)
         check(not missing_rls, 'upgrade: row-level security on all public tables', f'without RLS: {missing_rls}')
         grants = client_grants(connection)
@@ -174,17 +210,113 @@ def verify_upgrade(url: str):
         probe = [grant for grant in client_grants(connection) if ':_migration_probe:' in grant]
         connection.execute(text('drop table public._migration_probe'))
         check(not probe, 'upgrade: tables created later get no client-role grants', f'{probe}')
-    for role in CLIENT_ROLES:
-        with engine.connect() as connection:
-            connection.execute(text(f'set local role {role}'))
-            try:
-                connection.execute(text('select 1 from public.users limit 1'))
-                denied = False
-            except ProgrammingError:
-                denied = True
-            connection.rollback()
-            check(denied, f'upgrade: {role} is denied reading tenant tables')
+    verify_client_roles_denied(engine)
+    verify_constraints(engine)
+    with engine.connect() as connection:
+        state = fingerprints(connection, table_columns(connection, public_tables(connection)))
+    try:
+        alembic(url, 'downgrade', LOCKDOWN)
+        refused = False
+    except RuntimeError as error:
+        refused = 'Rollback application code' in str(error)
+    with engine.connect() as connection:
+        intact = version(connection) == HEAD and fingerprints(connection, table_columns(connection, public_tables(connection))) == state
+    check(refused and intact, 'upgrade: downgrade below 0006 is refused and changes nothing')
     engine.dispose()
+
+
+def verify_client_roles_denied(engine):
+    attempts = [(f'read {table}', f'select 1 from public."{table}" limit 1') for table in ('users', 'businesses', *PLATFORM_TABLES)]
+    attempts += [
+        ('insert platform_admins', "insert into public.platform_admins (id,auth_provider,auth_subject,is_active,created_at) values ('x','supabase','x',true,now())"),
+        ('insert business_applications', "insert into public.business_applications (id,auth_provider,auth_subject,contact_email,business_name,submitted_at,created_at,updated_at) values ('x','supabase','x','a@b.c','x',now(),now(),now())"),
+        ('update businesses status', "update public.businesses set status='SUSPENDED'"),
+    ]
+    for role in CLIENT_ROLES:
+        refused = []
+        for name, statement in attempts:
+            with engine.connect() as connection:
+                connection.execute(text(f'set local role {role}'))
+                try:
+                    connection.execute(text(statement))
+                    result = 'accepted'
+                except ProgrammingError as error:
+                    result = getattr(error.orig, 'sqlstate', None)
+                connection.rollback()
+            if result != DENIED:
+                refused.append(f'{name}: {result}')
+        check(not refused, f'upgrade: {role} cannot read or modify tenant, platform or application records', f'{refused}')
+
+
+def verify_constraints(engine):
+    """Each rule is checked with a valid write (control) and the violating write. Rolled back."""
+    with engine.connect() as connection:
+        connection.begin()
+        business = connection.execute(text("select id from businesses where name='Seed Tenant A'")).scalar_one()
+        other = connection.execute(text("select id from businesses where name='Seed Tenant B'")).scalar_one()
+        admin, missing = str(uuid4()), str(uuid4())
+        admin_row = "insert into platform_admins (id,auth_provider,auth_subject,is_active,created_at) values (:id,'supabase',:subject,true,now())"
+        application = ("insert into business_applications (id,auth_provider,auth_subject,contact_email,business_name,status,submitted_at,reviewed_at,reviewed_by_platform_admin_id,provisioned_business_id,created_at,updated_at) "
+                       "values (:id,'supabase',:subject,'owner@seed.invalid','Seed Applicant',:status,now(),:reviewed,:reviewer,:business,now(),now())")
+        app = lambda status='PENDING', reviewed=None, reviewer=None, business_id=None, subject='applicant': {  # noqa: E731
+            'id': str(uuid4()), 'subject': subject, 'status': status, 'reviewed': reviewed, 'reviewer': reviewer, 'business': business_id}
+        audit = "insert into platform_audit (id,platform_admin_id,action,target_type,target_id,metadata,created_at) values (:id,:admin,:action,'business_application',null,null,now())"
+        cases = [
+            ('new business defaults to ACTIVE', "insert into businesses (id,name,created_at) values (:id,'Defaulted',now())", {'id': str(uuid4())}, 'accepted'),
+            ('business status SUSPENDED accepted', 'update businesses set status=\'SUSPENDED\' where id=:id', {'id': other}, 'accepted'),
+            ('invalid business status rejected', 'update businesses set status=\'DELETED\' where id=:id', {'id': business}, CHECK),
+            ('platform admin created', admin_row, {'id': admin, 'subject': 'platform-subject'}, 'accepted'),
+            ('platform admin identity is unique', admin_row, {'id': str(uuid4()), 'subject': 'platform-subject'}, UNIQUE),
+            ('platform admin activation is explicit', "insert into platform_admins (id,auth_provider,auth_subject,created_at) values (:id,'supabase','other',now())", {'id': str(uuid4())}, NOT_NULL),
+            ('pending application accepted', application, app(), 'accepted'),
+            ('same applicant may apply again', application, app(), 'accepted'),
+            ('invalid application status rejected', application, app('ON_HOLD'), CHECK),
+            ('approval requires a provisioned business', application, app('APPROVED', reviewed=datetime.now(timezone.utc), reviewer=admin), CHECK),
+            ('pending application cannot carry a business', application, app('PENDING', business_id=business), CHECK),
+            ('approved application provisions a business', application, app('APPROVED', reviewed=datetime.now(timezone.utc), reviewer=admin, business_id=business), 'accepted'),
+            ('a business is provisioned by one application only', application, app('APPROVED', reviewed=datetime.now(timezone.utc), reviewer=admin, business_id=business, subject='someone-else'), UNIQUE),
+            ('rejection cannot provision a business', application, app('REJECTED', reviewed=datetime.now(timezone.utc), reviewer=admin, business_id=other), CHECK),
+            ('provisioned business must exist', application, app('APPROVED', reviewed=datetime.now(timezone.utc), reviewer=admin, business_id=missing), FOREIGN_KEY),
+            ('reviewer must be a platform admin', application, app('REJECTED', reviewed=datetime.now(timezone.utc), reviewer=missing), FOREIGN_KEY),
+            ('audit by platform admin accepted', audit, {'id': str(uuid4()), 'admin': admin, 'action': 'APPLICATION_APPROVED'}, 'accepted'),
+            ('system audit action accepted without admin', audit, {'id': str(uuid4()), 'admin': None, 'action': 'SYSTEM_BOOTSTRAP'}, 'accepted'),
+            ('non-system audit action requires an admin', audit, {'id': str(uuid4()), 'admin': None, 'action': 'APPLICATION_APPROVED'}, CHECK),
+            ('audit admin must exist', audit, {'id': str(uuid4()), 'admin': missing, 'action': 'APPLICATION_APPROVED'}, FOREIGN_KEY),
+        ]
+        for name, statement, params, expected in cases:
+            result = outcome(connection, statement, params)
+            check(result == expected, f'constraint: {name}', f'expected {expected}, got {result}')
+        defaulted = connection.execute(text("select status from businesses where name='Defaulted'")).scalar_one()
+        check(defaulted == 'ACTIVE', 'constraint: database default status is ACTIVE', defaulted)
+        verify_atomic_approval(connection, admin)
+        connection.rollback()
+
+
+def verify_atomic_approval(connection, admin: str):
+    """PENDING -> APPROVED: the business and every review field change in one transaction."""
+    pending = str(uuid4())
+    connection.execute(text("insert into business_applications (id,auth_provider,auth_subject,contact_email,business_name,submitted_at,created_at,updated_at) "
+                            "values (:id,'supabase','atomic-applicant','a@seed.invalid','Atomic Stall',now(),now(),now())"), {'id': pending})
+    half = outcome(connection, "update business_applications set status='APPROVED' where id=:id", {'id': pending})
+    check(half == CHECK, 'approval: status alone cannot change without review fields and business', f'got {half}')
+    business = str(uuid4())
+    transaction = connection.begin_nested()
+    try:
+        connection.execute(text("insert into businesses (id,name,created_at) values (:id,'Atomic Stall',now())"), {'id': business})
+        connection.execute(text("update business_applications set status='APPROVED', reviewed_at=now(), reviewed_by_platform_admin_id=:admin, "
+                                "review_notes='approved', provisioned_business_id=:business, updated_at=now() where id=:id and status='PENDING'"),
+                           {'admin': admin, 'business': business, 'id': pending})
+        transaction.commit()
+        result = 'accepted'
+    except DBAPIError as error:
+        transaction.rollback()
+        result = getattr(error.orig, 'sqlstate', None)
+    row = connection.execute(text('select status, provisioned_business_id, reviewed_by_platform_admin_id, reviewed_at is not null '
+                                  'from business_applications where id=:id'), {'id': pending}).one()
+    check(result == 'accepted' and tuple(row) == ('APPROVED', business, admin, True),
+          'approval: business and review fields commit atomically with PENDING -> APPROVED', f'{result} {tuple(row)}')
+    again = connection.execute(text("update business_applications set status='APPROVED' where id=:id and status='PENDING'"), {'id': pending}).rowcount
+    check(again == 0, 'approval: a repeated approval matches no PENDING row (idempotent)', f'rows {again}')
 
 
 def main() -> int:
