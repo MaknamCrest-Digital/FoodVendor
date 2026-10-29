@@ -1,5 +1,5 @@
 import {API_BASE_URL} from './config';
-import {createClient} from './supabase/client';
+import {AuthError,identity,type AuthSession} from './identity';
 
 export type AdminUser={id:string;businessId:string;locationId:string;name:string;email:string;role:string;roleId?:string;roleName?:string;permissions?:string[];businessName:string;locationName:string;terminalId:string;terminalName:string};
 export type Session={token:string;expiresAt:string;user:AdminUser};
@@ -35,37 +35,40 @@ export function isValidLoginIdentifier(identifier:string):boolean{
   return normalized==='demo-admin'||normalized==='demo-cashier'||/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
 }
 
+const OFFLINE_FIRST_SIGN_IN='First-time sign-in requires an internet connection. Reopen this device using a previously authenticated session to work offline.';
+const UNABLE_TO_CONNECT='Unable to connect to the server. Check your connection and try again.';
+
+export function signInMessage(error:AuthError):string{
+  switch(error.code){
+    case 'invalid_credentials':return 'Incorrect email or password.';
+    case 'email_not_confirmed':return 'Confirm your email address before signing in.';
+    case 'rate_limited':return 'Too many sign-in attempts. Please try again later.';
+    case 'network':case 'unavailable':
+      return typeof navigator!=='undefined'&&!navigator.onLine?OFFLINE_FIRST_SIGN_IN:UNABLE_TO_CONNECT;
+    default:return 'Unable to sign in right now. Please try again.';
+  }
+}
+
 export async function login(email:string,password:string):Promise<Session>{
-  const supabase=createClient();
-  let result;
+  const auth=identity();
+  // Ending the provider session is best effort here; its error was always ignored.
+  const discard=()=>auth.signOut().catch(()=>undefined);
+  let authSession:AuthSession;
   try{
-    result=await supabase.auth.signInWithPassword({email:normalizeLoginEmail(email),password});
-  }catch{
-    if(typeof navigator!=='undefined'&&!navigator.onLine)throw new Error('First-time sign-in requires an internet connection. Reopen this device using a previously authenticated session to work offline.');
-    throw new Error('Unable to connect to the server. Check your connection and try again.');
+    authSession=await auth.signIn(normalizeLoginEmail(email),password);
+  }catch(error){
+    if(error instanceof AuthError)throw new Error(signInMessage(error));
+    throw error;
   }
-  if(result.error){
-    const message=result.error.message.toLowerCase();
-    if(message.includes('invalid login credentials'))throw new Error('Incorrect email or password.');
-    if(message.includes('email not confirmed'))throw new Error('Confirm your email address before signing in.');
-    if(result.error.status===429)throw new Error('Too many sign-in attempts. Please try again later.');
-    if(!result.error.status||result.error.status>=500){
-      if(typeof navigator!=='undefined'&&!navigator.onLine)throw new Error('First-time sign-in requires an internet connection. Reopen this device using a previously authenticated session to work offline.');
-      throw new Error('Unable to connect to the server. Check your connection and try again.');
-    }
-    throw new Error('Unable to sign in right now. Please try again.');
-  }
-  const authSession=result.data.session;
-  if(!authSession)throw new Error('Unable to sign in right now. Please try again.');
   let response:Response;
   try{
-    response=await fetch(`${API_BASE_URL}/auth/me`,{headers:{Authorization:`Bearer ${authSession.access_token}`},signal:AbortSignal.timeout(10000)});
+    response=await fetch(`${API_BASE_URL}/auth/me`,{headers:{Authorization:`Bearer ${authSession.accessToken}`},signal:AbortSignal.timeout(10000)});
   }catch{
-    await supabase.auth.signOut();
-    throw new Error('Unable to connect to the server. Check your connection and try again.');
+    await discard();
+    throw new Error(UNABLE_TO_CONNECT);
   }
   if(!response.ok){
-    await supabase.auth.signOut();
+    await discard();
     if(response.status===401||response.status===403)throw new Error('This account has not been linked or is disabled. Contact your restaurant administrator.');
     throw new Error('Unable to load your restaurant account. Please try again.');
   }
@@ -74,13 +77,13 @@ export async function login(email:string,password:string):Promise<Session>{
     user=await response.json();
     if(!user||typeof user.id!=='string'||typeof user.businessId!=='string'||typeof user.locationId!=='string')throw new Error('Invalid profile');
   }catch{
-    await supabase.auth.signOut();
+    await discard();
     throw new Error('Unable to load your restaurant account. Please try again.');
   }
-  const data:Session={token:authSession.access_token,expiresAt:new Date(Date.now()+7*24*60*60*1000).toISOString(),user};
+  const data:Session={token:authSession.accessToken,expiresAt:new Date(Date.now()+7*24*60*60*1000).toISOString(),user};
   try{saveSession(data);}catch{
     memory=null;
-    await supabase.auth.signOut();
+    await discard();
     throw new Error('Your browser could not save the session. Allow site storage and try again.');
   }
   return data;

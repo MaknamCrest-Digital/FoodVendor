@@ -3,7 +3,7 @@ import type {FormEvent} from 'react';
 import {useState} from 'react';
 import Link from 'next/link';
 import {UtensilsCrossed} from 'lucide-react';
-import {createClient} from '../../src/lib/supabase/client';
+import {identity} from '../../src/lib/identity';
 import styles from '../../components/auth/Login.module.css';
 
 export default function ForgotPasswordPage(){
@@ -13,8 +13,7 @@ export default function ForgotPasswordPage(){
   async function submit(event:FormEvent<HTMLFormElement>){
     event.preventDefault();setBusy(true);setMessage('');
     try{
-      const {error}=await createClient().auth.resetPasswordForEmail(email.trim(),{redirectTo:`${window.location.origin}/update-password/`});
-      if(error)throw new Error(error.message);
+      await identity().requestPasswordReset(email.trim(),`${window.location.origin}/update-password/`);
       setMessage('If an account exists for that email, Supabase will send a password reset link.');
     }catch(error){setMessage(error instanceof Error?error.message:'Unable to send a reset email. Please try again.');}
     finally{setBusy(false);}
