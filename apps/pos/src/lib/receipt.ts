@@ -10,6 +10,8 @@ export type ReceiptDocument={
  orderNumber:string;
  dateTime:string;
  cashier:string;
+ // Printed on thermal receipts; the browser receipt layout is unchanged.
+ terminal?:string;
  items:Array<{name:string;variation?:string;quantity:number;unitPrice:number;lineTotal:number}>;
  subtotal:number;
  discount:number;
@@ -38,7 +40,7 @@ export function toReceiptDocument(order:LocalOrder):ReceiptDocument{
  return {
   business:{name:general?.businessName||'Sale receipt',address:general?.address||'',phone:general?.phone||'',logo:general?.logo||''},
   location:{name:snapshot?.location.name||'',address:snapshot?.location.address||'',phone:snapshot?.location.phone||''},
-  receiptNumber:order.receiptNo,orderNumber:order.id.slice(0,8),dateTime:order.occurredAt,cashier:order.cashierName||'',
+  receiptNumber:order.receiptNo,orderNumber:order.id.slice(0,8),dateTime:order.occurredAt,cashier:order.cashierName||'',terminal:snapshot?.terminalName||'',
   items,subtotal,discount:Math.max(0,subtotal-order.totalPesewas),total:order.totalPesewas,currency:order.currency||'GHS',
   timezone:general?.timezone||'Africa/Accra',dateFormat:general?.dateFormat||'DD/MM/YYYY',timeFormat:general?.timeFormat||'24h',
   paymentMethod:order.paymentMethod,amountTendered:order.amountTendered,change:order.change||0,paymentReference:order.paymentReference||'',
@@ -46,19 +48,23 @@ export function toReceiptDocument(order:LocalOrder):ReceiptDocument{
  };
 }
 
-export function renderReceipt(document:ReceiptDocument):string[]{
- const fields=document.template;
+export function receiptDateTime(document:Pick<ReceiptDocument,'dateTime'|'timezone'|'dateFormat'|'timeFormat'>):string{
  const date=new Date(document.dateTime);
  const dateParts=new Intl.DateTimeFormat('en-GB',{timeZone:document.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
  const part=(type:string)=>dateParts.find(value=>value.type===type)?.value||'';
  const day=document.dateFormat.replace('DD',part('day')).replace('MM',part('month')).replace('YYYY',part('year'));
+ return `${day} ${date.toLocaleTimeString('en-GB',{timeZone:document.timezone,hour12:document.timeFormat==='12h'})}`;
+}
+
+export function renderReceipt(document:ReceiptDocument):string[]{
+ const fields=document.template;
  const lines:string[]=[];
  if(fields.showBusinessName)lines.push(document.business.name);
  if(fields.showAddress)lines.push(document.location.address||document.business.address);
  if(fields.showPhone)lines.push(document.location.phone||document.business.phone);
  if(fields.showReceiptNumber)lines.push(`Receipt: ${document.receiptNumber}`);
  if(fields.showOrderNumber)lines.push(`Order: ${document.orderNumber}`);
- lines.push(`${day} ${date.toLocaleTimeString('en-GB',{timeZone:document.timezone,hour12:document.timeFormat==='12h'})}`);
+ lines.push(receiptDateTime(document));
  if(fields.showCashier)lines.push(`Cashier: ${document.cashier||'—'}`);
  lines.push(...document.items.map(item=>`${item.quantity} × ${item.name}  ${money(item.lineTotal,document.currency)}`));
  lines.push(`Subtotal: ${money(document.subtotal,document.currency)}`);
