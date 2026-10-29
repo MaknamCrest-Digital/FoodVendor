@@ -5,7 +5,7 @@ import {listOrders} from '../../src/lib/db';
 import {completeSale, money} from '../../src/services/checkout';
 import {configuredMenu,categories as menuCategories} from '../../src/lib/menu';
 import {useAdminData} from '../admin/AdminData';
-import {printer,browserFallback,type PrintDestination} from '../../src/services/printer';
+import {printer,type PrintDestination} from '../../src/services/printer';
 import {syncPending} from '../../src/services/sync';
 import {paymentLabel} from './display';
 import {useConnectivity} from '../../hooks/useConnectivity';
@@ -35,6 +35,8 @@ function usePosState() {
   const [pendingOnly, setPendingOnly] = useState(false);
   const [receipt, setReceipt] = useState<LocalOrder|null>(null);
   const [receiptStatus,setReceiptStatus]=useState('');
+  // The just-saved sale whose receipt has not been printed yet (auto-print off or no printer).
+  const [unprintedReceiptId,setUnprintedReceiptId]=useState<string|null>(null);
   const paying = useRef(false);
   const {session}=useAuth();
   const [lastRun,setLastRun]=useState<{synced:number;failed:number;at:string}|null>(null);
@@ -117,6 +119,7 @@ function usePosState() {
     const defaultPrinter=settings.device.printers.find(item=>item.id===settings.device.defaultPrinterId);
     setReceiptStatus(settings.pos.autoPrint?(defaultPrinter?'Preparing receipt for the configured printer…':'No default printer configured. The saved receipt is ready to print.'):'Automatic printing is disabled. The saved receipt is ready to print.');
     setReceipt(saved);
+    setUnprintedReceiptId(settings.pos.autoPrint&&defaultPrinter?null:saved.id);
     setNotice(`Sale completed · ${money(saved.totalPesewas)} · ${paymentLabel(saved.paymentMethod)}. Receipt ready; start a fresh order when done.`);
     paying.current = false;
     setBusy(false);
@@ -126,17 +129,19 @@ function usePosState() {
   }
 
   async function printSavedReceipt(order:LocalOrder,destination:PrintDestination){
-    if(!printer.isAvailable(destination)){
-      setReceiptStatus(`${destination.name} is not available in this build. The sale is saved; use Print again to open the browser fallback.`);
+    const unavailable=printer.unavailableReason(destination);
+    if(unavailable){
+      setReceiptStatus(`${destination.name} is not available in this build. ${unavailable} The sale is saved; use Print again to open the browser fallback.`);
       try{await logSystem('PRINT_FAILED','No print adapter is available for the configured default destination',order.id);}
       catch(error){console.error('Could not record the receipt print failure.',error);}
       return;
     }
     setReceiptStatus(`Sending receipt to ${destination.name}…`);
     try{
-      await printer.printReceipt(order,destination);
-      setReceiptStatus('Print dialog closed. Check the printer; use Print again if no receipt came out.');
-      try{await logSystem('PRINT_DIALOG_CLOSED','Print dialog closed; physical output cannot be confirmed by the browser',order.id);}
+      const outcome=await printer.printReceipt(order,destination);
+      setReceiptStatus(outcome==='SENT'?`Receipt sent to ${destination.name}. Check the printer; use Print again if no receipt came out.`:'Print dialog closed. Check the printer; use Print again if no receipt came out.');
+      // PRINT_COMPLETED is the audit action cashiers may record; the message states what is known.
+      try{await logSystem('PRINT_COMPLETED',outcome==='SENT'?'Receipt sent to the printer connection; paper output is not confirmed':'Print dialog closed; physical output cannot be confirmed by the browser',order.id);}
       catch(error){console.error('Could not record receipt print status.',error);}
     }catch(error){
       setReceiptStatus(`Sale saved. ${error instanceof Error?error.message:'Printing failed.'} Use Print again to retry.`);
@@ -145,24 +150,32 @@ function usePosState() {
     }
   }
 
-  async function reprint(order: LocalOrder) {
+  // Prints a saved sale on request. The first print of a just-saved, unprinted receipt is
+  // part of the sale (pos.sale.create); any later print is a reprint. Never changes the sale.
+  async function printOnRequest(order: LocalOrder, first: boolean) {
     try {
-      requirePermission('pos.receipt.reprint');
-      const destination=settings.device.printers.find(item=>item.id===settings.device.defaultPrinterId);
-      const selected=destination&&printer.isAvailable(destination)?destination:null;
-      const target=selected||browserFallback(order);
-      setReceiptStatus(selected?'Sending saved receipt to the configured printer…':'Configured printer unavailable. Opening the browser print fallback…');
-      await printer.printReceipt(order,target);
-      setReceiptStatus('Print dialog closed. Check the printer; use Print again if no receipt came out.');
-      await logSystem('RECEIPT_REPRINT_DIALOG_CLOSED','Print dialog closed for a saved receipt',order.id);
+      requirePermission(first?'pos.sale.create':'pos.receipt.reprint');
+      if(first)setUnprintedReceiptId(null);
+      const destination=settings.device.printers.find(item=>item.id===settings.device.defaultPrinterId)??null;
+      setReceiptStatus(destination&&printer.isAvailable(destination)?'Sending saved receipt to the configured printer…':'Configured printer unavailable. Opening the browser print fallback…');
+      const result=await printer.reprint(order,destination);
+      const fallbackNote=result.usedFallback&&result.failure?`${result.failure} Browser print fallback used. `:'';
+      setReceiptStatus(`${fallbackNote}${result.outcome==='SENT'?`Receipt sent to ${result.destination.name}.`:'Print dialog closed.'} Check the printer; use Print again if no receipt came out.`);
+      const detail=result.outcome==='SENT'?'Saved receipt sent to the printer connection':'Print dialog closed for a saved receipt';
+      await logSystem(first?'PRINT_COMPLETED':'RECEIPT_REPRINTED',detail,order.id);
     } catch(error) {
       setReceiptStatus(`The sale is safe. ${error instanceof Error?error.message:'Could not open the system print dialog.'}`);
       setNotice('The sale is safe. The receipt is still available to print again.');
+      if(first)try{await logSystem('PRINT_FAILED','Receipt printing failed after the sale was saved',order.id);}catch(logError){console.error('Could not record the receipt print failure.',logError);}
     }
   }
+  const reprint=(order:LocalOrder)=>printOnRequest(order,false);
+  const printReceipt=(order:LocalOrder)=>printOnRequest(order,order.id===unprintedReceiptId);
+  // The first-print offer belongs to the checkout moment; later prints are reprints.
+  const closeReceipt=()=>{setReceipt(null);setUnprintedReceiptId(null);};
 
 
-  return {status,queued,lastRun,lastSync,cart,setCart,category,setCategory,categories,query,setQuery,online,orders,payment,setPayment,busy,syncing,syncState,notice,setNotice,ready,historyQuery,setHistoryQuery,pendingOnly,setPendingOnly,receipt,setReceipt,receiptStatus,paying,total,count,pending,shownMenu,shownOrders,changeQuantity,addItem,pay,reprint,sync};
+  return {status,queued,lastRun,lastSync,cart,setCart,category,setCategory,categories,query,setQuery,online,orders,payment,setPayment,busy,syncing,syncState,notice,setNotice,ready,historyQuery,setHistoryQuery,pendingOnly,setPendingOnly,receipt,setReceipt,receiptStatus,paying,total,count,pending,shownMenu,shownOrders,changeQuantity,addItem,pay,reprint,printReceipt,unprintedReceiptId,closeReceipt,sync};
 }
 
 const PosContext = createContext<ReturnType<typeof usePosState>|null>(null);

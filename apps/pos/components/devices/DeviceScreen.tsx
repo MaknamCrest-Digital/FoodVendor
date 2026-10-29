@@ -1,12 +1,15 @@
 "use client";
-import {useState,type FormEvent} from 'react';
+import {useEffect,useState,type FormEvent} from 'react';
+import {Bluetooth,Download,MonitorSmartphone,Plus,Printer,SlidersHorizontal,Sparkles,Upload} from 'lucide-react';
 import {useAuth} from '../auth/AuthProvider';
 import {useSettings} from '../settings/SettingsProvider';
 import {can} from '../../src/lib/access';
 import {Button,PageHeader,StatusBadge} from '../ui/primitives';
-import {printer} from '../../src/services/printer';
+import {bluetoothPrinter,printer,type PrinterState} from '../../src/services/printer';
 import type {PaperProfile,PrinterConnection,PrinterProfile} from '../../src/lib/settings';
 import {exportLocalData,importLocalData} from '../../src/storage/dataTransfer';
+import {AutomaticSetup,DeviceCapabilities,ManualSetup,type SetupMode} from './PrinterSetup';
+import TestPrintPanel from './TestPrintPanel';
 
 const connections:Array<{value:PrinterConnection;label:string}>=[
  {value:'SYSTEM_PRINTER',label:'System printer'},
@@ -23,20 +26,33 @@ const paperProfiles:Array<{value:PaperProfile;label:string}>=[
  {value:'A4',label:'A4'},
  {value:'LETTER',label:'Letter'},
 ];
+const STATE_BADGE:Record<PrinterState,{label:string;tone:'success'|'warning'|'danger'|'info'}>={
+ CONNECTED:{label:'Connected',tone:'success'},DISCONNECTED:{label:'Disconnected',tone:'warning'},
+ UNSUPPORTED:{label:'Unsupported',tone:'danger'},SETUP_REQUIRED:{label:'Setup required',tone:'info'},
+};
 
 export default function DeviceScreen(){
  const {session}=useAuth();
  const {settings,save}=useSettings();
- const [name,setName]=useState('');
- const [connectionType,setConnectionType]=useState<PrinterConnection>('SYSTEM_PRINTER');
- const [paperProfile,setPaperProfile]=useState<PaperProfile>('THERMAL_80');
- const [networkAddress,setNetworkAddress]=useState('');
  const [busy,setBusy]=useState(false);
  const [message,setMessage]=useState('');
+ const [mode,setMode]=useState<SetupMode>('AUTOMATIC');
+ const [,setConnections]=useState(0);
  const [transferBusy,setTransferBusy]=useState(false);
  const [transferMessage,setTransferMessage]=useState('');
  const capabilities=printer.detectCapabilities();
  const profiles=settings.device.printers;
+ const manage=!!session&&can('devices.manage',session.user);
+ const general=settings.general;
+ const testDetails=(profile:PrinterProfile)=>()=>({printerName:profile.name,vendorName:general.businessName,dateTime:new Date().toISOString(),timezone:general.timezone,dateFormat:general.dateFormat,timeFormat:general.timeFormat});
+
+ // Silent reconnection only: printers this browser already permitted. Never prompts.
+ useEffect(()=>{
+  let active=true;
+  for(const profile of profiles.filter(item=>item.connectionType==='BLUETOOTH_PRINTER'))
+   void bluetoothPrinter.reconnect(profile).then(connected=>{if(connected&&active)setConnections(count=>count+1);});
+  return()=>{active=false;};
+ },[profiles]);
 
  async function persist(printers:PrinterProfile[],defaultPrinterId:string|null,successMessage:string){
   setBusy(true);
@@ -51,25 +67,31 @@ export default function DeviceScreen(){
   }
  }
 
- async function addPrinter(event:FormEvent){
-  event.preventDefault();
-  if(!session||busy)return;
-  if(connectionType==='NETWORK_PRINTER'&&!networkAddress.trim()){
-   setMessage('Enter the network printer address.');
-   return;
+ async function addPrinter(draft:PrinterProfile,successMessage:string){
+  const supported=printer.isAvailable(draft);
+  const profile={...draft,isDefault:!settings.device.defaultPrinterId&&supported,capabilities:supported?[draft.connectionType]:[]};
+  await persist([...profiles,profile],profile.isDefault?profile.id:settings.device.defaultPrinterId,successMessage);
+ }
+
+ // The Bluetooth chooser opens only here, from a tap on Connect. The permitted printer is
+ // remembered in device settings only by people who may manage devices.
+ async function connect(profile:PrinterProfile){
+  if(busy)return;
+  setBusy(true);
+  setMessage('');
+  try{
+   const paired=await bluetoothPrinter.pair(profile);
+   setBusy(false);
+   setConnections(count=>count+1);
+   const connected=`Connected to ${paired.deviceName||profile.name}. Use Test print to check the output.`;
+   if(manage){
+    const updated={...profile,configuration:{...profile.configuration,deviceId:paired.deviceId,deviceName:paired.deviceName}};
+    await persist(profiles.map(item=>item.id===profile.id?updated:item),settings.device.defaultPrinterId,connected);
+   }else setMessage(`${connected} An owner can save this printer so it reconnects automatically.`);
+  }catch(error){
+   setMessage(error instanceof Error?error.message:'Could not connect to the Bluetooth printer.');
+   setBusy(false);
   }
-  const id=crypto.randomUUID();
-  const supported=capabilities.capabilities.includes(connectionType);
-  const profile:PrinterProfile={
-   id,businessId:session.user.businessId,locationId:session.user.locationId,deviceId:session.user.terminalId,
-   name:name.trim(),printerType:paperProfile==='A4'||paperProfile==='LETTER'?'OFFICE':'THERMAL',
-   connectionType,paperProfile,status:'CONFIGURED',isDefault:!settings.device.defaultPrinterId&&supported,
-   capabilities:supported?[connectionType]:[],
-   configuration:connectionType==='NETWORK_PRINTER'?{address:networkAddress.trim()}:{},
-  };
-  await persist([...profiles,profile],profile.isDefault?id:settings.device.defaultPrinterId,'Printer profile added.');
-  setName('');
-  setNetworkAddress('');
  }
 
  async function setDefault(profile:PrinterProfile){
@@ -84,14 +106,15 @@ export default function DeviceScreen(){
   await persist(remaining,nextDefault,`${profile.name} was removed from this device.`);
  }
 
- async function testPrint(profile:PrinterProfile){
+ async function toggleAutoPrint(){
+  if(busy)return;
   setBusy(true);
   setMessage('');
   try{
-   await printer.testPrint(profile);
-   setMessage('Print dialog closed. Check the printer; this test did not create a sale or payment.');
+   await save('pos',{...settings.pos,autoPrint:!settings.pos.autoPrint});
+   setMessage(settings.pos.autoPrint?'Auto-print turned off. After payment, the sale is saved and Print receipt is offered.':'Auto-print turned on. After payment, the sale is saved first, then the receipt prints.');
   }catch(error){
-   setMessage(error instanceof Error?error.message:'Could not print a test receipt.');
+   setMessage(error instanceof Error?error.message:'Could not change auto-print.');
   }finally{
    setBusy(false);
   }
@@ -140,45 +163,63 @@ export default function DeviceScreen(){
   }
  }
 
- return <section className="module-page">
-  <PageHeader title="Devices & Printers" description="Configure receipt destinations for this business, location and device."/>
-  <section className="ui-card" aria-labelledby="available-printers">
-   <h2 id="available-printers">Printer destinations</h2>
-   <p>Platform: {capabilities.platform}. A browser can open a system print dialog, but cannot discover installed printers or confirm that paper printed. Bluetooth, USB and network routes require a matching native adapter.</p>
-   {profiles.length===0?<p>No printer is configured. Checkout will save the sale and open the receipt preview.</p>:<div className="settings-team-list">
-    {profiles.map(profile=>{
-     const available=printer.isAvailable(profile);
-     return <article key={profile.id} className="printer-profile">
-      <div><strong>{profile.name}</strong><small>{profile.printerType} · {connections.find(item=>item.value===profile.connectionType)?.label} · {paperProfiles.find(item=>item.value===profile.paperProfile)?.label}</small></div>
-      <div><StatusBadge tone={available?'success':'warning'} dot>{available?'Available':'Adapter unavailable'}</StatusBadge>{profile.id===settings.device.defaultPrinterId&&<StatusBadge tone="info">Default</StatusBadge>}</div>
-      {profile.connectionType!=='SYSTEM_PRINTER'&&profile.connectionType!=='BROWSER_PRINT'&&<small>Connection discovery and connect/disconnect are not available in this browser build.</small>}
-      <div className="printer-profile-actions">
-       {profile.id!==settings.device.defaultPrinterId&&<Button disabled={busy||!available} onClick={()=>void setDefault(profile)}>Set as default</Button>}
-       <Button disabled={busy||!available} onClick={()=>void testPrint(profile)}>Test print</Button>
-       <Button disabled={busy} onClick={()=>void removePrinter(profile)}>Remove</Button>
-      </div>
-     </article>;
-    })}
-   </div>}
-  </section>
-  {session&&can('devices.manage',session.user)&&<section className="ui-card" aria-labelledby="offline-data-transfer">
-   <h2 id="offline-data-transfer">Offline data transfer</h2>
-   <p>Move a copy of local sales and operational events from a browser to another device. Export does not erase the source. Import accepts only this signed-in business and location, and never replaces conflicting records. Cloud settings and printer profiles are not included.</p>
-   <div className="printer-profile-actions">
-    <Button disabled={transferBusy} onClick={()=>void exportData()}>{transferBusy?'Preparing…':'Export offline data'}</Button>
-    <label className="ui-button ui-button--secondary data-transfer-file">Import offline data<input type="file" accept="application/json,.json" disabled={transferBusy} onChange={event=>void importData(event)} /></label>
+ const autoPrintHint='On: the receipt prints right after the sale is saved. Off: the cashier taps Print receipt.';
+ return <section className="module-page devices-page">
+  <PageHeader title="Devices & Printers" description="Receipt printers and offline data for this business, location and device."/>
+  <div className="devices-layout">
+   <div className="devices-column">
+    <section className="ui-card devices-card" aria-labelledby="available-printers">
+     <header className="devices-card-head"><span className="devices-card-icon" aria-hidden="true"><Printer size={20}/></span><div><h2 id="available-printers">Printers</h2><p>Sales are always saved before anything prints. Software cannot confirm that paper came out.</p></div></header>
+     {can('settings.pos')
+      ?<label className="setting-toggle"><span className="setting-toggle-text"><span id="auto-print-label">Auto-print after payment</span><small id="auto-print-hint">{autoPrintHint}</small></span><input type="checkbox" role="switch" aria-labelledby="auto-print-label" aria-describedby="auto-print-hint" checked={settings.pos.autoPrint} disabled={busy} onChange={()=>void toggleAutoPrint()}/></label>
+      :<p className="devices-readonly">Auto-print after payment: <strong>{settings.pos.autoPrint?'On':'Off'}</strong></p>}
+     {profiles.length===0?<div className="devices-empty"><Printer size={28} aria-hidden="true"/><strong>No printer yet</strong><p>Checkout saves the sale and offers Print receipt. {manage?'Add a printer below.':'Ask an owner to add one.'}</p></div>:<div className="printer-list">
+      {profiles.map(profile=>{
+       const status=printer.status(profile);
+       const badge=STATE_BADGE[status.state];
+       const setupMode=profile.configuration.setupMode==='AUTOMATIC'?'Automatic':profile.configuration.setupMode==='MANUAL'?'Manual':'';
+       const connectButton=status.state==='DISCONNECTED'&&<Button variant="primary" disabled={busy} onClick={()=>void connect(profile)}>Connect</Button>;
+       const manageButtons=manage&&<>
+        {profile.id!==settings.device.defaultPrinterId&&<Button disabled={busy||!printer.isAvailable(profile)} onClick={()=>void setDefault(profile)}>Set as default</Button>}
+        <Button variant="quiet" className="printer-remove" disabled={busy} onClick={()=>void removePrinter(profile)}>Remove</Button>
+       </>;
+       return <article key={profile.id} className="printer-profile">
+        <div className="printer-profile-head">
+         <span className="printer-icon" aria-hidden="true">{profile.connectionType==='BLUETOOTH_PRINTER'?<Bluetooth size={20}/>:<Printer size={20}/>}</span>
+         <div className="printer-profile-title"><strong>{profile.name}</strong><small>{connections.find(item=>item.value===profile.connectionType)?.label} · {paperProfiles.find(item=>item.value===profile.paperProfile)?.label}{setupMode&&` · ${setupMode} setup`}</small></div>
+         <div className="printer-profile-badges"><StatusBadge tone={badge.tone} dot>{badge.label}</StatusBadge>{profile.id===settings.device.defaultPrinterId&&<StatusBadge tone="info">Default</StatusBadge>}</div>
+        </div>
+        <p className="printer-profile-detail">{status.detail}</p>
+        {can('devices.view')?<TestPrintPanel profile={profile} details={testDetails(profile)} before={connectButton} after={manageButtons}/>:<div className="printer-profile-actions">{connectButton}{manageButtons}</div>}
+       </article>;
+      })}
+     </div>}
+     {message&&<p role="status" className="devices-message">{message}</p>}
+    </section>
+    {manage&&session&&<section className="ui-card devices-card" aria-labelledby="printer-setup">
+     <header className="devices-card-head"><span className="devices-card-icon" aria-hidden="true"><Plus size={20}/></span><div><h2 id="printer-setup">Add a printer</h2><p>Automatic detection suits most setups. Manual configuration is for technicians with verified printer details.</p></div></header>
+     <div className="setup-modes" role="group" aria-label="Printer setup mode">
+      <button type="button" aria-pressed={mode==='AUTOMATIC'} onClick={()=>setMode('AUTOMATIC')}><Sparkles size={18} aria-hidden="true"/>Automatic detection (recommended)</button>
+      <button type="button" aria-pressed={mode==='MANUAL'} onClick={()=>setMode('MANUAL')}><SlidersHorizontal size={18} aria-hidden="true"/>Manual configuration (advanced)</button>
+     </div>
+     {mode==='AUTOMATIC'?<AutomaticSetup user={session.user} busy={busy} onAdd={addPrinter}/>:<ManualSetup user={session.user} busy={busy} onAdd={addPrinter}/>}
+    </section>}
    </div>
-   {transferMessage&&<p role="status">{transferMessage}</p>}
-  </section>}
-  <form className="owner-form settings-form ui-card" onSubmit={event=>void addPrinter(event)}>
-   <h2>Add printer destination</h2>
-   <p>Profiles are scoped to the signed-in business, location and device. Physical printer discovery is provided only by an installed platform adapter.</p>
-   <label>Printer name<input required maxLength={120} value={name} onChange={event=>setName(event.target.value)} placeholder="Receipt printer"/></label>
-   <label>Connection<select value={connectionType} onChange={event=>setConnectionType(event.target.value as PrinterConnection)}>{connections.map(item=><option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-   <label>Paper profile<select value={paperProfile} onChange={event=>setPaperProfile(event.target.value as PaperProfile)}>{paperProfiles.map(item=><option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-   {connectionType==='NETWORK_PRINTER'&&<label>Network address<input required maxLength={255} value={networkAddress} onChange={event=>setNetworkAddress(event.target.value)} placeholder="Printer address"/></label>}
-   {message&&<p role="status">{message}</p>}
-   <Button variant="primary" disabled={busy}>{busy?'Saving…':'Add printer'}</Button>
-  </form>
+   <div className="devices-column">
+    <section className="ui-card devices-card" aria-labelledby="this-device">
+     <header className="devices-card-head"><span className="devices-card-icon" aria-hidden="true"><MonitorSmartphone size={20}/></span><div><h2 id="this-device">This device</h2><p>{settings.device.name} · {capabilities.platform}</p></div></header>
+     <DeviceCapabilities/>
+    </section>
+    {manage&&<section className="ui-card devices-card" aria-labelledby="offline-data-transfer">
+     <header className="devices-card-head"><span className="devices-card-icon" aria-hidden="true"><Download size={20}/></span><div><h2 id="offline-data-transfer">Offline data transfer</h2><p>Copy local sales and events to another device.</p></div></header>
+     <ul className="devices-notes"><li>Export does not erase this device.</li><li>Import accepts only this signed-in business and location, and never replaces conflicting records.</li><li>Cloud settings and printer profiles are not included.</li></ul>
+     <div className="printer-profile-actions">
+      <Button disabled={transferBusy} onClick={()=>void exportData()}><Download size={16} aria-hidden="true"/>{transferBusy?'Preparing…':'Export offline data'}</Button>
+      <label className="ui-button ui-button--secondary data-transfer-file"><Upload size={16} aria-hidden="true"/>Import offline data<input type="file" accept="application/json,.json" disabled={transferBusy} onChange={event=>void importData(event)} /></label>
+     </div>
+     {transferMessage&&<p role="status" className="devices-message">{transferMessage}</p>}
+    </section>}
+   </div>
+  </div>
  </section>;
 }
