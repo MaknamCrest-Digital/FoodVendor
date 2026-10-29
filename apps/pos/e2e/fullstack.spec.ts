@@ -1,14 +1,11 @@
 // Real FastAPI (services/api/scripts/e2e_server.py), real signed JWTs, real PWA.
 // Run: FULLSTACK_TOKENS=<workdir>/tokens.json npx playwright test e2e/fullstack.spec.ts
 import {readFileSync} from 'node:fs';
-import nextEnv from '@next/env';
 import {test,expect,type APIRequestContext,type BrowserContext,type Page,type Route} from '@playwright/test';
-import {savedOrders} from './pilot-fixture';
+import {savedOrders,supabaseAuthCookie} from './pilot-fixture';
 
 const file=process.env.FULLSTACK_TOKENS;
 const tokens=file?JSON.parse(readFileSync(file,'utf8')) as {admin:string;cashier:string;api:string}:null;
-nextEnv.loadEnvConfig(process.cwd(),false);
-const projectRef=new URL(process.env.NEXT_PUBLIC_SUPABASE_URL||'https://local.supabase.co').hostname.split('.')[0];
 const target=(url:string)=>tokens!.api+new URL(url).pathname.replace(/^.*\/api\/v1/,'')+new URL(url).search;
 
 async function forwardApi(context:BrowserContext){
@@ -28,14 +25,14 @@ async function signIn(page:Page,request:APIRequestContext,token:string){
   const profile=await (await request.get(`${tokens!.api}/auth/me`,{headers:{Authorization:`Bearer ${token}`}})).json();
   await page.route('**/__fullstack_setup',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>setup</title>'}));
   await page.goto('/__fullstack_setup');
-  await page.evaluate(({profile,token,projectRef})=>{
+  await page.evaluate(({profile,token,cookie})=>{
     const expiresAt=Math.floor(Date.now()/1000)+3*3600;
     localStorage.setItem('food-vendor-admin-session',JSON.stringify({token,expiresAt:new Date(Date.now()+7*864e5).toISOString(),user:profile}));
     const user={id:profile.id,aud:'authenticated',role:'authenticated',email:profile.email,app_metadata:{provider:'email'},user_metadata:{},created_at:new Date().toISOString()};
     const session={access_token:token,token_type:'bearer',expires_in:10800,expires_at:expiresAt,refresh_token:'e2e-refresh',user};
     const encoded=btoa(JSON.stringify(session)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
-    document.cookie=`sb-${projectRef}-auth-token=base64-${encoded}; Path=/; SameSite=Lax`;
-  },{profile,token,projectRef});
+    document.cookie=`${cookie}=base64-${encoded}; Path=/; SameSite=Lax`;
+  },{profile,token,cookie:supabaseAuthCookie()});
   return profile as {id:string;businessId:string};
 }
 async function serverSnapshot(request:APIRequestContext,token:string){

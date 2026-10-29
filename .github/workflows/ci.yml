@@ -13,6 +13,11 @@ jobs:
   pos:
     runs-on: ubuntu-latest
     defaults: {run: {working-directory: apps/pos}}
+    # The PWA refuses to start without Supabase settings. These test-only values are
+    # never contacted: E2E specs mock Supabase Auth and the API.
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-placeholder
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
