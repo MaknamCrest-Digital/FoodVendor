@@ -45,3 +45,13 @@ test('the sign-in screen applies a new version straight away',async({page})=>{
   expect(await waitingWorker(page)).toBe(false);
  });
 });
+
+test('a release found while the app is opening still shows New update available',async({page})=>{
+ await pilot(page);await page.goto('/pos/');await expect(page.locator('.admin-header')).toContainText('Synced');await controlled(page);
+ await withNewRelease(async()=>{
+  // Reopening the installed app: the browser finds the release during navigation,
+  // often before the page has hydrated and started listening for it.
+  await page.reload();
+  await expect(page.getByRole('status',{name:'New update available'})).toBeVisible({timeout:15000});
+ });
+});
