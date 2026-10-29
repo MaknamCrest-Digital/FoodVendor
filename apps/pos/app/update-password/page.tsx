@@ -3,7 +3,7 @@ import type {FormEvent} from 'react';
 import {useEffect,useState} from 'react';
 import Link from 'next/link';
 import {UtensilsCrossed} from 'lucide-react';
-import {createClient} from '../../src/lib/supabase/client';
+import {identity} from '../../src/lib/identity';
 import styles from '../../components/auth/Login.module.css';
 
 export default function UpdatePasswordPage(){
@@ -12,17 +12,16 @@ export default function UpdatePasswordPage(){
   const [message,setMessage]=useState('');
   const [busy,setBusy]=useState(false);
   useEffect(()=>{
-    void createClient().auth.getSession().then(({data,error})=>{
-      if(error)throw error;
-      setReady(Boolean(data.session));
-      if(!data.session)setMessage('This reset link is invalid or expired. Request a new link.');
+    // Opening the provider client also completes the session carried by the reset link.
+    void identity().getSession().then(session=>{
+      setReady(Boolean(session));
+      if(!session)setMessage('This reset link is invalid or expired. Request a new link.');
     }).catch((error:unknown)=>setMessage(error instanceof Error?error.message:'Unable to verify this reset link.'));
   },[]);
   async function submit(event:FormEvent<HTMLFormElement>){
     event.preventDefault();setBusy(true);setMessage('');
     try{
-      const {error}=await createClient().auth.updateUser({password});
-      if(error)throw new Error(error.message);
+      await identity().updatePassword(password);
       setMessage('Password updated. You can now sign in with your new password.');
     }catch(error){setMessage(error instanceof Error?error.message:'Unable to update the password. Please try again.');}
     finally{setBusy(false);}
