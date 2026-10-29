@@ -2,6 +2,7 @@ import type {Metadata,Viewport} from 'next';
 import type {ReactNode} from 'react';
 import {AuthProvider} from '../components/auth/AuthProvider';
 import OfflineRegistration from '../components/layout/OfflineRegistration';
+import {EARLY_INSTALL_CAPTURE} from '../src/lib/install';
 import './globals.css';
 export const metadata:Metadata={
   title:'Maknam POS',
@@ -12,4 +13,4 @@ export const metadata:Metadata={
   appleWebApp:{capable:true,title:'Maknam POS',statusBarStyle:'default'},
 };
 export const viewport:Viewport={width:'device-width',initialScale:1,themeColor:'#0F586E'};
-export default function RootLayout({children}:{children:ReactNode}){return <html lang="en"><body><AuthProvider>{children}<OfflineRegistration/></AuthProvider></body></html>;}
+export default function RootLayout({children}:{children:ReactNode}){return <html lang="en"><head><script dangerouslySetInnerHTML={{__html:EARLY_INSTALL_CAPTURE}}/></head><body><AuthProvider>{children}<OfflineRegistration/></AuthProvider></body></html>;}

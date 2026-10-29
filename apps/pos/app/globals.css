@@ -364,6 +364,63 @@ a:focus-visible, summary:focus-visible, select:focus-visible {
 
 .sync-button.sync-synced{color:var(--color-success)}.sync-button.sync-error{color:var(--color-danger);font-weight:600}.sync-button.sync-offline{color:var(--color-warning)}.install-prompt{display:inline-flex;align-items:center;gap:2px}.install-button{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 10px;border:1px solid var(--color-brand-border);border-radius:999px;background:transparent;color:var(--color-brand-primary);font-size:11px;font-weight:600}.install-dismiss{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:0;background:transparent;color:var(--color-brand-text-muted)}
 
+.update-banner{position:fixed;left:50%;bottom:20px;z-index:80;transform:translateX(-50%);display:flex;align-items:center;gap:12px;width:min(640px,calc(100vw - 32px));padding:12px 14px 12px 16px;border:1px solid var(--color-brand-border);border-radius:16px;background:var(--color-brand-surface);color:var(--color-brand-text-main);box-shadow:0 12px 40px var(--shadow-color);font-size:13px;line-height:1.5}
+.update-banner-icon{display:grid;place-items:center;flex:0 0 40px;height:40px;border-radius:12px;background:var(--color-brand-bg);color:var(--color-brand-primary)}
+.update-banner-text{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0}
+.update-banner-text strong{font-size:14px}
+.update-banner-text small{font-size:12px;color:var(--color-brand-text-muted)}
+@keyframes update-banner-in{from{opacity:0;transform:translate(-50%,16px)}to{opacity:1;transform:translate(-50%,0)}}
+.update-banner{animation:update-banner-in .25s ease-out}
+.update-banner button{flex:0 0 auto;min-height:40px;padding:0 16px;border:0;border-radius:10px;background:var(--color-brand-primary);color:var(--color-brand-surface);font-weight:700}
+@media(max-width:600px){.update-banner{flex-wrap:wrap;bottom:max(12px,env(safe-area-inset-bottom))}.update-banner button{width:100%;min-height:44px}}
+
+/* Team & Access: people, role cards and the permission editor. */
+.team-access{display:flex;flex-direction:column;gap:18px}
+.team-access-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.team-access-head .ui-button,.team-access .form-actions .ui-button{display:inline-flex;align-items:center;gap:8px}
+.settings-content h3.team-section-title{display:flex;align-items:center;gap:8px;margin:10px 0 0;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--color-brand-text-muted)}
+.team-section-title span{padding:2px 8px;border-radius:999px;background:var(--color-brand-bg);color:var(--color-brand-primary);font-size:11px;letter-spacing:0}
+.team-members{display:flex;flex-direction:column;gap:10px;margin:0;padding:0;list-style:none}
+.team-members li{display:flex;align-items:center;flex-wrap:wrap;gap:14px;padding:14px 16px;border:1px solid color-mix(in srgb,var(--color-brand-border) 70%,transparent);border-radius:16px}
+.team-avatar{display:grid;place-items:center;flex:0 0 42px;height:42px;border-radius:50%;background:var(--color-brand-bg);color:var(--color-brand-primary);font-weight:700}
+.team-member-text{display:flex;flex:1;flex-direction:column;gap:3px;min-width:160px}
+.team-member-text strong{font-size:15px}
+.team-member-text small{font-size:12px;color:var(--color-brand-text-muted);overflow-wrap:anywhere}
+.team-member-badges{display:flex;flex-wrap:wrap;gap:6px}
+.team-member-badges .badge{min-height:28px;padding:5px 10px;font-size:11px}
+.team-roles{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.team-role{display:flex;flex-direction:column;gap:10px;padding:16px;border:1px solid color-mix(in srgb,var(--color-brand-border) 70%,transparent);border-radius:16px;background:var(--color-brand-surface);text-align:left}
+.team-role-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.team-role-head strong{font-size:15px}
+.team-role-head small{padding:3px 8px;border-radius:999px;background:var(--color-brand-bg);color:var(--color-brand-text-muted);font-size:11px}
+.team-role>small{font-size:12px;color:var(--color-brand-text-muted)}
+.team-role-meter{height:6px;border-radius:999px;background:var(--color-brand-bg);overflow:hidden}
+.team-role-meter i{display:block;height:100%;border-radius:inherit;background:var(--color-brand-primary)}
+.team-role .ui-button{margin-top:auto}
+.team-role-new{align-items:center;justify-content:center;min-height:150px;border:1.5px dashed var(--color-brand-border);background:transparent;color:var(--color-brand-primary);font-weight:700}
+.team-role-new:hover{background:var(--color-brand-bg)}
+.owner-form.team-form{gap:16px}
+.permission-groups{display:flex;flex-direction:column;gap:8px}
+.owner-form details.permission-group{padding:0;border:1px solid color-mix(in srgb,var(--color-brand-border) 70%,transparent);border-radius:14px;overflow:hidden}
+.owner-form .permission-group summary{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:52px;padding:12px 16px;text-transform:none;list-style:none}
+.permission-group summary::-webkit-details-marker{display:none}
+.permission-group summary::after{content:"";width:8px;height:8px;margin-left:4px;border-right:2px solid var(--color-brand-text-muted);border-bottom:2px solid var(--color-brand-text-muted);transform:rotate(45deg);transition:transform .15s}
+.permission-group[open] summary::after{transform:rotate(225deg)}
+.permission-group summary>span{flex:1}
+.permission-group[open] summary{border-bottom:1px solid color-mix(in srgb,var(--color-brand-border) 50%,transparent);background:color-mix(in srgb,var(--color-brand-bg) 45%,var(--color-brand-surface))}
+.permission-count{padding:3px 9px;border-radius:999px;background:var(--color-info-soft);color:var(--color-brand-primary);font-size:11px;font-weight:700}
+.permission-count.is-all{background:var(--color-success-soft);color:var(--color-success)}
+.permission-count.is-none{background:var(--color-brand-bg);color:var(--color-brand-text-muted)}
+.permission-group-actions{display:flex;gap:8px;padding:12px 16px 0}
+.permission-group-actions button{min-height:34px;padding:0 12px;border:1px solid var(--color-brand-border);border-radius:9px;background:var(--color-brand-surface);color:var(--color-brand-primary);font-size:12px;font-weight:600}
+.permission-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px 16px 16px}
+.permission-list .setting-toggle{padding:10px 12px}
+.permission-list .setting-toggle-text small{font-family:ui-monospace,monospace;font-size:11px}
+.owner-form .permission-list .permission-row{display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--color-brand-border) 60%,transparent);border-radius:12px;font-weight:400}
+.owner-form .permission-list .permission-row select{width:120px;min-height:40px;padding:8px 10px}
+.owner-form .permission-list .permission-row .setting-toggle-text small{font-family:inherit}
+@media(max-width:760px){.permission-list{grid-template-columns:1fr}.team-members li{align-items:flex-start}.team-members li .ui-button{width:100%}}
+
 /* Settings and Devices: grouped fields, switches, padded cards. */
 .ui-card{padding:24px}
 .settings-layout{grid-template-columns:220px minmax(0,1fr)}

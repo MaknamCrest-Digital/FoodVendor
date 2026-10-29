@@ -21,7 +21,9 @@ const CACHE='food-vendor-pos-${version}';
 const ASSETS=new Set(${JSON.stringify(assets)});
 const routeFile=path=>(path.endsWith('/')?path:path+'/')+'index.html';
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll([...ASSETS]))));
-// Never force activation during an active shift. A new worker waits for tabs to close.
+// Never force activation during an active shift. A new worker waits for tabs to close,
+// or for the page to ask (the person tapped Reload now, or nobody is signed in).
+self.addEventListener('message',event=>{if(event.data&&event.data.type==='SKIP_WAITING')self.skipWaiting();});
 self.addEventListener('activate',event=>event.waitUntil(Promise.all([
   caches.keys().then(keys=>Promise.all(keys.filter(key=>(key.startsWith('food-vendor-pos-')||key.startsWith('adonai-pos-'))&&key!==CACHE).map(key=>caches.delete(key)))),
   self.clients.claim()
